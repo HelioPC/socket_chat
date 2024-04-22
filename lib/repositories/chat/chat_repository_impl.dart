@@ -12,12 +12,14 @@ import 'package:socket_test/models/chat.dart';
 import 'package:socket_test/models/message.dart';
 import 'package:socket_test/repositories/auth/auth_repository.dart';
 import 'package:socket_test/repositories/auth/auth_repository_impl.dart';
+import 'package:socket_test/repositories/chat/chat_list_notifier.dart';
 import 'package:socket_test/repositories/chat/chat_repository.dart';
 import 'package:socket_test/utils/rest_client.dart';
 import 'package:socket_test/utils/storage.dart';
 
-final chatProvider = Provider.autoDispose<ChatRepository>(
+final chatRepositoryProvider = Provider.autoDispose<ChatRepository>(
   (ref) => ChatRepositoryImpl(
+    ref: ref,
     restClient: ref.read(restClientProvider(null)),
     storage: ref.read(storageProvider),
     authRepository: ref.read(authRepositoryProvider(null)),
@@ -25,6 +27,7 @@ final chatProvider = Provider.autoDispose<ChatRepository>(
 );
 
 class ChatRepositoryImpl implements ChatRepository {
+  final ProviderRef ref;
   final RestClient restClient;
   final Storage storage;
   final AuthRepository authRepository;
@@ -34,6 +37,7 @@ class ChatRepositoryImpl implements ChatRepository {
   final StreamController<List<Chat>?> _chatStream = StreamController();
 
   ChatRepositoryImpl({
+    required this.ref,
     required this.restClient,
     required this.storage,
     required this.authRepository,
@@ -43,6 +47,7 @@ class ChatRepositoryImpl implements ChatRepository {
 
   @override
   Stream<List<Chat>?> get chatStream => _chatStream.stream;
+
   @override
   List<Chat> get chats => _chats;
 
@@ -63,24 +68,31 @@ class ChatRepositoryImpl implements ChatRepository {
 
     _messageSocket = io.io(
       'ws://localhost:3000/chat',
-      io.OptionBuilder().setTransports(['websocket']).setExtraHeaders(
-          headers).build(),
+      io.OptionBuilder()
+          .setTransports(['websocket'])
+          .setExtraHeaders(headers)
+          .build(),
     );
 
     _messageSocket?.onDisconnect((_) => debugPrint('Disconnected'));
 
-    _messageSocket?.onConnectError((data) => debugPrint('Connect error: $data'));
+    _messageSocket
+        ?.onConnectError((data) => debugPrint('Connect error: $data'));
 
     _messageSocket?.onError((data) => debugPrint('Error: $data'));
 
     _messageSocket?.on('message', (data) {
-      final message = Message.fromJson(data);
-      final chatId = message.groupChatId;
+      try {
+        debugPrint('Message: $data');
 
-      final chat = _chats.firstWhere((element) => element.id == chatId);
-      chat.messages.add(message);
+        final message = Message.fromMap(data);
 
-      _chatStream.add(_chats);
+        ref.read(chatNotifierProvider.notifier).receiveMessage(message);
+
+        _chatStream.add(_chats);
+      } catch (e) {
+        debugPrint('Error: $e');
+      }
     });
   }
 
@@ -141,6 +153,8 @@ class ChatRepositoryImpl implements ChatRepository {
             _chats.addAll(chats);
             _chatStream.add(_chats);
 
+            fetchAllChatsMessages();
+
             return Right(chats);
           } catch (e) {
             debugPrint('Error: $e');
@@ -151,6 +165,64 @@ class ChatRepositoryImpl implements ChatRepository {
       }
     } on ApiException catch (e) {
       return Left(e);
+    }
+  }
+
+  Future<void> fetchAllChatsMessages() async {
+    if (!_isAuthenticated) {
+      debugPrint('User not authenticated');
+      return;
+    }
+
+    for (final chat in _chats) {
+      await fetchMessages(chat.id);
+    }
+  }
+
+  @override
+  Future<void> fetchMessages(int chatId) async {
+    if (!_isAuthenticated) {
+      debugPrint('User not authenticated');
+      return;
+    }
+
+    const limit = 10;
+    final offset =
+        _chats.firstWhere((element) => element.id == chatId).messages.length;
+
+    try {
+      final response = await restClient.auth.getRequest(
+        path:
+            '${UrlsConstants.fetchMessagesUrl}$chatId/messages?limit=$limit&offset=$offset',
+      );
+
+      debugPrint('Response: ${response.body}');
+
+      switch (response.statusCode) {
+        case 400:
+        case 401:
+        case 403:
+          return;
+        case 200:
+          try {
+            final messages = (json.decode(response.body) as List)
+                .map((e) => Message.fromMap(e))
+                .toList();
+
+            final chat = _chats.firstWhere((element) => element.id == chatId);
+            chat.messages.clear();
+            chat.messages.addAll(messages);
+
+            _chatStream.add(_chats);
+          } catch (e) {
+            debugPrint('Error: $e');
+          }
+          break;
+        default:
+          break;
+      }
+    } catch (e) {
+      debugPrint('Error: $e');
     }
   }
 }

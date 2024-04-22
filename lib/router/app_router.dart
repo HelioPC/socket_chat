@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:socket_test/repositories/auth/auth_repository_impl.dart';
+import 'package:socket_test/repositories/chat/chat_repository_impl.dart';
 import 'package:socket_test/router/go_router_refresh_stream.dart';
+import 'package:socket_test/screens/chat_screen.dart';
 import 'package:socket_test/screens/home_screen.dart';
 import 'package:socket_test/screens/login_screen.dart';
 import 'package:socket_test/screens/register_screen.dart';
@@ -11,11 +13,9 @@ final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
 enum AppRoutes {
   home,
+  chat,
   login,
   register,
-  settings,
-  profile,
-  editPhoto,
 }
 
 final goRouterProvider = Provider<GoRouter>((ref) {
@@ -43,6 +43,8 @@ GoRouter goRouter(ProviderRef ref) {
           return '/home';
         }
       } else {
+        ref.read(chatRepositoryProvider).disconnectSocket();
+
         if (path != '/login' && path != '/register') {
           return '/login';
         }
@@ -71,12 +73,24 @@ GoRouter goRouter(ProviderRef ref) {
         },
       ),
       GoRoute(
-        path: '/home',
-        name: AppRoutes.home.name,
-        pageBuilder: (context, state) => const NoTransitionPage(
-          child: HomeScreen(),
-        ),
-      ),
+          path: '/home',
+          name: AppRoutes.home.name,
+          pageBuilder: (context, state) => const NoTransitionPage(
+                child: HomeScreen(),
+              ),
+          routes: [
+            GoRoute(
+              path: 'chat/:chatId',
+              name: AppRoutes.chat.name,
+              pageBuilder: (context, state) {
+                final chatId = state.pathParameters['chatId']!;
+
+                return NoTransitionPage(
+                  child: ChatScreen(chatId: int.parse(chatId)),
+                );
+              },
+            ),
+          ]),
     ],
   );
 }

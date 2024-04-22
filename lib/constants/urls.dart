@@ -9,4 +9,5 @@ sealed class UrlsConstants {
   static const String changeUserPassword = '/user/change-password';
   static const String updateUserPhoto = '/user/upload-photo';
   static const String fetchChatsUrl = '/chat/list';
+  static const String fetchMessagesUrl = '/chat/';
 }
